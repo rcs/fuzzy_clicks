@@ -1,18 +1,18 @@
-# Basic gameplan here for finding the closest links is to generate an overlay
-# to sit on top, indexing all our clicking elements in a quadtree.
-# When we click, find the quadtree nodes overlapping an ever-expanding circle
-# until we find something.
+# Basic gameplan here for finding the closest links is to generate a quadtree,
+# indexing all our elements. When we click, find the quadtree nodes overlapping
+# an ever-expanding circle until we find something.
 
-# Helper for creating synthetic click events
-fireEvent =  (obj, evt) ->
+# Helper for creating synthetic click events, non-bubbling
+click_it =  (obj, evt) ->
   if document.createEvent
       evtObj = document.createEvent('MouseEvents')
-      evtObj.initEvent(evt, true, false)
+      evtObj.initEvent('click', false)
       obj.dispatchEvent(evtObj)
   else if (document.createEventObject)
       # For IE -- untested
       evtObj = document.createEventObject()
-      obj.fireEvent('on'+evt, evtObj)
+      evtObj.cancelBubble = true
+      obj.fireEvent('onclick', evtObj)
 
 # Helper function for determining if val is between min and max
 inRange = (val, min, max) ->
@@ -68,16 +68,18 @@ class Rectangle
 # QuadTree implementation, holding rectangles
 class QuadTree
 
-  constructor: (bounds, maxElements = 3) ->
+  constructor: (bounds, options = {}) ->
     @bounds = bounds
-    @maxElements = maxElements
+    @maxElements = options.maxElements || 3
+    # The circumscribed radius of the max square
+    @tolerance = options.tolerance || Math.max(@bounds.width(),@bounds.height())*Math.sqrt(2)
     @rectangles = []
     @subNodes = {}
     return this
 
   # Convenience function for creating and wrapping all <a>s
-  @from_elem_with_as: ($elem) ->
-    q = new QuadTree($elem)
+  @from_elem: ($elem, options = {}) ->
+    q = new QuadTree($elem, options)
     q.insert($elem.find('a'))
     q
 
@@ -150,11 +152,11 @@ class QuadTree
         distance_to_rect(point,rect)
       )[0]
     # Finish if we're over radius
-    else if radius > $body.width()*Math.sqrt(2) and radius > $body.height()*Math.sqrt(2)
+    else if radius >= @tolerance
       undefined
     # Try again with a larger radius if we didn't find anything
     else
-      @closest_to_point point, $body, radius*2
+      @closest_to_point point, $body, Math.min(radius*2,@tolerance)
 
 
 
@@ -293,32 +295,30 @@ class QuadTree
     @insert holding
 
 # Enable fuzzy clicking on an element
-fuzzy_clicking = ($elem) ->
-  q = QuadTree.from_elem_with_as($elem)
-
-  # Define an overlay that sits on top of the element
-  overlay = $('<span>')
-    .addClass('fuzzy-overlay')
-    .offset
-      top: q.bounds.offset().top
-      left: q.bounds.offset().left
-    .width(q.bounds.width())
-    .height(q.bounds.height())
-    .css('position', 'absolute')
-    .css('z-index', '9001') # Over 9000
-
-  # Insert the overlay next to the element
-  $elem.after overlay
+fuzzy_clicking = ($elem,options = {}) ->
+  q = QuadTree.from_elem($elem, options)
 
   # Bind clicks on the element to find and act on the closest
-  overlay.on 'click', (e) ->
+  $elem.on 'click', (e) ->
     closest = q.closest_to_point { x: e.pageX, y: e.pageY }, $elem
     if closest
       # Fire a synthetic click event on the closest
-      fireEvent(closest.get(0),'click')
+      click_it(closest.get(0))
       # We're done with this event
       e.stopPropagation()
       e.preventDefault()
 
+  return q
+
+# This will construct a fuzzy clicking effect on the element.
+#
+# All <a>s will be able to be clicked within <options.tolerance> pixels
+( ($) ->
+  $.fn.fuzzy_clicking = (options = {}) ->
+    fuzzy_clicking(this,options)
+)(jQuery)
+
+
+# Export
 base = (window || this)
 base.fuzzy_clicking = fuzzy_clicking
